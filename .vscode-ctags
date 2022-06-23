@@ -1,0 +1,14 @@
+!_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append ;" to lines/
+!_TAG_FILE_SORTED	1	/0=unsorted, 1=sorted, 2=foldcase/
+!_TAG_PROGRAM_AUTHOR	Darren Hiebert	/dhiebert@users.sourceforge.net/
+!_TAG_PROGRAM_NAME	Exuberant Ctags	//
+!_TAG_PROGRAM_URL	http://ctags.sourceforge.net	/official site/
+!_TAG_PROGRAM_VERSION	5.9~svn20110310	//
+CC	Makefile	/^CC=$(CROSS_COMPILE)gcc$/;"	m
+CFLAGS	Makefile	/^CFLAGS:=$(shell pkg-config --cflags gstreamer-base-1.0 gstreamer-1.0)$/;"	m
+CROSS_COMPILE	Makefile	/^CROSS_COMPILE=$/;"	m
+LD	Makefile	/^LD=$(CROSS_COMPILE)ld$/;"	m
+LDFLAGS	Makefile	/^LDFLAGS:=$(shell pkg-config --libs gstreamer-base-1.0 gstreamer-1.0)$/;"	m
+OBJ	Makefile	/^OBJ:=$(SRC:%.c=%.o)$/;"	m
+SRC	Makefile	/^SRC:=gstsunxiv4l2.c $/;"	m
+TARGET	Makefile	/^TARGET:=libgstsunxiv4l2src.so$/;"	m
