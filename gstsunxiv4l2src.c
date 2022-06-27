@@ -28,10 +28,6 @@ enum
 {
     PROP_0,
     PROP_DEVICE,
-    PROP_FPS,
-    PROP_WIDTH,
-    PROP_HEIGHT,
-    PROP_FORMAT,
     PROP_IOMODE,
     PROP_CAMERA_INDEX,
 };
@@ -52,22 +48,6 @@ gst_sunxiv4l2src_set_property(GObject *object, guint prop_id,
     {
     case PROP_DEVICE:
         src->device = g_value_dup_string(value);
-        break;
-    case PROP_WIDTH:
-        src->info.width = g_value_get_uint(value);
-        break;
-    case PROP_HEIGHT:
-        src->info.height = g_value_get_uint(value);
-        break;
-    case PROP_FPS:
-        src->info.fps_d = gst_value_get_fraction_denominator(value);
-        src->info.fps_n = gst_value_get_fraction_numerator(value);
-        break;
-    case PROP_FORMAT:
-        {
-            GstVideoFormat gst_fmt = gst_video_format_from_string(g_value_get_string(value));
-            src->v4l2fmt = gst_video_format_to_fourcc(gst_fmt);
-        }
         break;
     case PROP_IOMODE:
         src->io_mode = g_value_get_uint(value);
@@ -91,23 +71,6 @@ gst_sunxiv4l2src_get_property(GObject *object, guint prop_id,
     case PROP_DEVICE:
         g_value_set_string(value, src->device);
         break;
-    case PROP_WIDTH:
-        g_value_set_uint(value, src->info.width);
-        break;
-    case PROP_HEIGHT:
-        g_value_set_uint(value, src->info.height);
-        break;
-    case PROP_FPS:
-    {
-        gst_value_set_fraction(value, src->info.fps_n, src->info.fps_d);
-    }
-    break;
-    case PROP_FORMAT:
-    {
-        GstVideoFormat gst_fmt = gst_video_format_from_fourcc(src->v4l2fmt);
-        g_value_set_string(value, gst_video_format_to_string(gst_fmt));
-    }
-    break;
     case PROP_IOMODE:
         g_value_set_uint(value, src->io_mode);
         break;
@@ -156,6 +119,8 @@ gst_sunxiv4l2src_set_caps(GstBaseSrc *bsrc, GstCaps *caps)
     gint v4l2_fmt;
 
     v4l2src = GST_SUNXI_V4L2SRC(bsrc);
+
+    GST_DEBUG("caps:%"GST_PTR_FORMAT, caps);
 
     if (v4l2src->old_caps) {
         if (gst_caps_is_equal(v4l2src->old_caps, caps))
@@ -275,81 +240,6 @@ gst_sunxiv4l2src_query(GstBaseSrc *bsrc, GstQuery *query)
 
 done:
     return ret;
-    #if 0
-    gboolean ret = FALSE;
-    GstSunxiV4l2Src *v4l2src;
-
-    v4l2src = GST_SUNXI_V4L2SRC(bsrc);
-
-    switch (GST_QUERY_TYPE(query))
-    {
-    case GST_QUERY_CONVERT:
-    {
-        GstFormat src_fmt, dest_fmt;
-        gint64 src_val, dest_val;
-
-        GST_OBJECT_LOCK(v4l2src);
-
-        gst_query_parse_convert(query, &src_fmt, &src_val, &dest_fmt, &dest_val);
-
-        ret = gst_video_info_convert(&v4l2src->info, src_fmt, src_val, dest_fmt, &dest_val);
-
-        gst_query_set_convert(query, src_fmt, src_val, dest_fmt, dest_val);
-
-        GST_OBJECT_UNLOCK(v4l2src);
-    }
-    break;
-    case GST_QUERY_LATENCY:
-    {
-        GST_OBJECT_LOCK(v4l2src);
-
-        if (v4l2src->info.fps_n > 0)
-        {
-            GstClockTime latency;
-
-            latency = gst_util_uint64_scale(GST_SECOND, v4l2src->info.fps_d, v4l2src->info.fps_n);
-            GST_OBJECT_UNLOCK(v4l2src);
-            gst_query_set_latency(query, gst_base_src_is_live(GST_BASE_SRC_CAST(v4l2src)), latency, GST_CLOCK_TIME_NONE);
-            GST_DEBUG("Reporting latency of %" GST_TIME_FORMAT, GST_TIME_ARGS(latency));
-            ret = TRUE;
-        }
-        else
-            GST_OBJECT_UNLOCK(v4l2src);
-    }
-    break;
-    case GST_QUERY_DURATION:
-        if (bsrc->num_buffers != -1)
-        {
-            GstFormat fmt;
-
-            gst_query_parse_duration(query, &fmt, NULL);
-            switch (fmt)
-            {
-            case GST_FORMAT_TIME:
-            {
-                gint64 dur;
-                GST_OBJECT_LOCK(v4l2src);
-                dur = gst_util_uint64_scale_int_round(bsrc->num_buffers * GST_SECOND, v4l2src->info.fps_d, v4l2src->info.fps_n);
-                ret = TRUE;
-                GST_OBJECT_UNLOCK(v4l2src);
-            }
-            break;
-            case GST_FORMAT_BYTES:
-                GST_OBJECT_LOCK(v4l2src);
-                ret = TRUE;
-                gst_query_set_duration(query, GST_FORMAT_BYTES, bsrc->num_buffers * v4l2src->info.size);
-                GST_OBJECT_UNLOCK(v4l2src);
-                break;
-            }
-        }
-        break;
-    default:
-        ret = GST_BASE_SRC_CLASS(parent_class)->query(bsrc, query);
-        break;
-    }
-
-    return ret;
-    #endif
 }
 
 static gint
@@ -422,103 +312,56 @@ gst_sunxi_v4l2_callocator_cb(gpointer user_data, gint *buffer_count)
     return ret;
 }
 
-#if 0
 static GstFlowReturn
 gst_sunxi_v4l2src_register_buffer(GstSunxiV4l2Src *v4l2src)
 {
-    GstFlowReturn ret = GST_FLOW_OK;
-    GstBuffer *buffer;
-    gint i;
+    GstBufferPool *pool;
+    GstAllocator *allocator;
+    pool = v4l2src->pool;
+    GstStructure *config;
 
-    GST_DEBUG("actual_buf_cnt:%d", v4l2src->actual_buf_cnt);
+    config = gst_buffer_pool_get_config(pool);
 
-    for (i = 0; i < v4l2src->actual_buf_cnt; i++) {
-        GST_DEBUG("%d ", i);
-        ret = gst_buffer_pool_acquire_buffer(v4l2src->pool, &buffer, NULL);
-        if (ret != GST_FLOW_OK) {
-            GST_DEBUG("gst_buffer_pool_acquire_buffer failed.");
-            return ret;
-        }
+    g_return_val_if_fail(config != NULL, GST_FLOW_ERROR);
 
-        gst_buffer_unref(buffer);
+    if (gst_buffer_pool_config_get_allocator(config, &allocator, NULL) == FALSE) {
+        GST_ERROR("Get allocator FAILED");
+        return GST_FLOW_ERROR;
     }
 
-    return ret;
+    return gst_sunxi_v4l2_buffer_register(allocator);
 }
-#endif
+
 static GstFlowReturn
 gst_sunxi_v4l2src_acquire_buffer(GstSunxiV4l2Src *v4l2src, GstBuffer **buf)
 {
-    #if 1
     GstFlowReturn ret = GST_FLOW_OK;
+    GstVideoMeta *vmeta;
     GstVideoFrameFlags flags = GST_VIDEO_FRAME_FLAG_NONE;
     GstBufferPool *pool = v4l2src->pool;
     GstBuffer *buffer;
-    GstMapInfo info;
-    GList *buffer_list;
-    gint max, min;
-    GstVideoMeta *vmeta;
-    GstStructure *config;
-    gint i;
 
     if (v4l2src->stream_on == FALSE) {
-        config = gst_buffer_pool_get_config(pool);
-        g_return_val_if_fail(config != NULL, GST_FLOW_ERROR);
 
-        if (!gst_buffer_pool_config_get_params(config, NULL, NULL, &min, &max)) {
-            return GST_FLOW_ERROR;
-        }
+        ret = gst_sunxi_v4l2src_register_buffer(v4l2src);
 
-        for (i = 0; i < max; i++) {
-
-            ret = gst_buffer_pool_acquire_buffer(pool, &buffer, NULL);
-
-            g_return_val_if_fail(ret == GST_FLOW_OK, ret);
-
-            ret = gst_buffer_map(buffer, &info, GST_MAP_READWRITE);
-
-            g_return_val_if_fail(ret == TRUE, GST_FLOW_ERROR);
-            
-            v4l2src->gstbuffer_in_v4l2 = g_list_append(v4l2src->gstbuffer_in_v4l2, buffer);
-        }
-
-        buffer_list = g_list_first(v4l2src->gstbuffer_in_v4l2);
-
-        buffer = buffer_list->data;
-
-        v4l2src->gstbuffer_in_v4l2 = g_list_remove(v4l2src->gstbuffer_in_v4l2, buffer);
+        g_return_val_if_fail(ret == GST_FLOW_OK, ret);
 
         ret = gst_sunxiv4l2_flush_all_buffer(v4l2src->v4l2handle);
 
-        g_return_val_if_fail(ret == 0, GST_FLOW_ERROR);
+        g_return_val_if_fail(ret == GST_FLOW_OK, ret);
 
-        v4l2src->stream_on = gst_sunxi_v4l2_streamon(v4l2src->v4l2handle);
-
-        g_return_val_if_fail(v4l2src->stream_on == TRUE, GST_FLOW_ERROR);
-
-        ret = GST_FLOW_OK;
-        
-    } else {
         ret = gst_buffer_pool_acquire_buffer(pool, &buffer, NULL);
 
         g_return_val_if_fail(ret == GST_FLOW_OK, ret);
 
-        if (g_list_length(v4l2src->gstbuffer_in_v4l2)) {
-            buffer_list = g_list_first(v4l2src->gstbuffer_in_v4l2);
-            v4l2src->gstbuffer_in_v4l2 = g_list_remove(v4l2src->gstbuffer_in_v4l2, buffer_list->data);
-            v4l2src->gstbuffer_in_v4l2 = g_list_append(v4l2src->gstbuffer_in_v4l2, buffer);
-            buffer = buffer_list->data;
-        }
+        v4l2src->stream_on =  gst_sunxi_v4l2_streamon(v4l2src->v4l2handle);
 
-        if (gst_sunxiv4l2_camera_qbuf(v4l2src->v4l2handle, buffer) < 0) {
-            GST_ERROR("qbuffer FAILED. errno:%d", errno);
-            return GST_FLOW_ERROR;
-        }
-    }
+        g_return_val_if_fail(v4l2src->stream_on == TRUE, GST_FLOW_ERROR);
+    } else {
+        ret = gst_buffer_pool_acquire_buffer(pool, &buffer, NULL);
 
-    if (gst_sunxiv4l2_camera_dqbuf(v4l2src->v4l2handle, buffer) < 0) {
-        GST_ERROR("dqbuffer FAILED. errno:%d", errno);
-        return GST_FLOW_ERROR;
+        g_return_val_if_fail(ret == GST_FLOW_OK , ret);
     }
 
     vmeta = gst_buffer_get_video_meta(buffer);
@@ -546,80 +389,6 @@ gst_sunxi_v4l2src_acquire_buffer(GstSunxiV4l2Src *v4l2src, GstBuffer **buf)
     GST_DEBUG("field type: %d", flags);
 
     return ret;
-    #endif
-
-    #if 0
-    GstFlowReturn ret = GST_FLOW_OK;
-    GstVideoFrameFlags flags = GST_VIDEO_FRAME_FLAG_NONE;
-    GstVideoMeta *vmeta;
-    GList *list;
-    GstMapInfo info;
-    gint i;
-    GstBuffer *buffer;
-    GstMemory *mem;
-    gint buffer_count;
-
-    for (i = g_list_length(v4l2src->gstbuffer_in_v4l2); i < DEFAULT_FRAMES_IN_V4L2_CAPTURE; i = g_list_length(v4l2src->gstbuffer_in_v4l2)) {
-        ret = gst_buffer_pool_acquire_buffer(v4l2src->pool, &buffer, NULL);
-        if (ret != GST_FLOW_OK) {
-            GST_ERROR("gst_buffer_pool_acquire_buffer FAILED.");
-            return ret;
-        }
-
-        if (!gst_buffer_map(buffer, &info, GST_MAP_READWRITE)) {
-            GST_ERROR("gst_buffer_map FAILED.");
-            return GST_FLOW_ERROR;
-        }
-
-        v4l2src->gstbuffer_in_v4l2 = g_list_append(v4l2src->gstbuffer_in_v4l2, buffer);
-
-        if (gst_sunxi_v4l2_qbuf(v4l2src->v4l2handle, i)) {
-            GST_ERROR("gst_sunxi_v4l2_qbuf FAILED.");
-            return GST_FLOW_ERROR;
-        }   
-    }
-
-    if (v4l2src->stream_on == FALSE) {
-        gst_sunxi_v4l2_streamon(v4l2src->v4l2handle);
-        v4l2src->stream_on = TRUE;
-    }
-
-
-    if (gst_sunxi_v4l2_dqbuf(v4l2src->v4l2handle) < 0) {
-        GST_ERROR_OBJECT(v4l2src, "Dequeue buffer failed.");
-        return GST_FLOW_ERROR;
-    }
-
-    list = g_list_first(v4l2src->gstbuffer_in_v4l2);
-
-    *buf = list->data;
-
-    v4l2src->gstbuffer_in_v4l2 = g_list_remove(v4l2src->gstbuffer_in_v4l2, *buf);
-
-    vmeta = gst_buffer_get_video_meta(*buf);
-
-    if (!vmeta) {
-        GstVideoInfo info;
-
-        if (gst_sunxi_video_info_from_caps(&info, v4l2src->old_caps)) {
-            GST_ERROR_OBJECT(v4l2src, "invalid caps.");
-            return GST_FLOW_ERROR;
-        }
-
-        vmeta = gst_buffer_add_video_meta(*buf, 
-            GST_VIDEO_FRAME_FLAG_NONE,
-            GST_VIDEO_INFO_FORMAT(&info),
-            v4l2src->info.width,
-            v4l2src->info.height
-        );
-    }    
-
-    vmeta->flags = flags;
-
-    GST_DEBUG("field type: %d", flags);
-
-    return ret;
-    #endif
 }
 
 static GstFlowReturn
@@ -629,7 +398,6 @@ gst_sunxi_v4l2src_create(GstPushSrc *psrc, GstBuffer **buf)
     GstClockTime delay, abs_time, timestamp, base_time, duration;
     GstClock *clock;
     GstMessage *qos_msg;
-    GstBuffer *buffer = NULL;
     GstSunxiV4l2Src *v4l2src = GST_SUNXI_V4L2SRC(psrc);
 
     ret = gst_sunxi_v4l2src_acquire_buffer(v4l2src, buf);
@@ -754,89 +522,14 @@ retry:
         v4l2src->offset = GST_BUFFER_OFFSET(*buf);
     }
 
+    GST_DEBUG("timestamp: %" GST_TIME_FORMAT " duration: %" GST_TIME_FORMAT
+      , GST_TIME_ARGS (timestamp), GST_TIME_ARGS (duration));
+
     GST_BUFFER_TIMESTAMP(*buf) = timestamp;
+    GST_BUFFER_PTS (*buf) = timestamp;
+    GST_BUFFER_DTS (*buf) = timestamp;
     GST_BUFFER_DURATION(*buf) = duration;
 
-
-    #if 0
-    buffer = *buf;
-
-    timestamp = GST_BUFFER_TIMESTAMP(buffer);
-
-    duration = v4l2src->duration;
-
-    GST_OBJECT_LOCK(v4l2src);
-
-    if ((clock = GST_ELEMENT_CLOCK(v4l2src))) {
-        base_time = GST_ELEMENT(v4l2src)->base_time;
-        gst_object_ref(clock);
-    } else {
-        base_time = GST_CLOCK_TIME_NONE;
-    }
-
-    GST_OBJECT_UNLOCK(v4l2src);
-
-    if (clock) {
-        abs_time = gst_clock_get_time(clock);
-        gst_object_unref(clock);
-    } else {
-        base_time = GST_CLOCK_TIME_NONE;
-    }
-
-    if (!GST_CLOCK_TIME_IS_VALID(v4l2src->base_time_orig)) {
-        v4l2src->base_time_orig = base_time;
-    }
-
-    GST_DEBUG("base_time: %" GST_TIME_FORMAT " abs_time: %"GST_TIME_FORMAT,
-                    GST_TIME_ARGS(base_time), GST_TIME_ARGS(abs_time));
-
-    if (timestamp != GST_CLOCK_TIME_NONE) {
-        struct timespec now;
-        GstClockTime gstnow;
-
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        gstnow = GST_TIMESPEC_TO_TIME(now);
-
-        if (gstnow < timestamp && (timestamp - gstnow) > (10 * GST_SECOND)) {
-            GTimeVal now;
-            g_get_current_time(&now);
-            gstnow = GST_TIMEVAL_TO_TIME(now);
-        }
-
-        if (gstnow > timestamp) {
-            delay = gstnow - timestamp;
-        } else {
-            delay = 0;
-        }
-
-        GST_DEBUG("ts: %" GST_TIME_FORMAT " now: %"GST_TIME_FORMAT
-            " delay %"GST_TIME_FORMAT, GST_TIME_ARGS(timestamp),
-            GST_TIME_ARGS(gstnow), GST_TIME_ARGS(delay));
-    } else {
-        if (GST_CLOCK_TIME_IS_VALID(duration))
-            delay = duration;
-        else
-            delay = 0;
-    }
-
-    if (G_LIKELY (abs_time != GST_CLOCK_TIME_NONE)) {
-        timestamp = abs_time - v4l2src->base_time_orig;
-        if (timestamp > delay)
-            timestamp -= delay;
-        else
-            timestamp = 0;
-    } else {
-        timestamp = GST_CLOCK_TIME_NONE;
-    }
-
-    GST_DEBUG("timestamp: %" GST_TIME_FORMAT " duration: %"
-        GST_TIME_FORMAT, GST_TIME_ARGS(timestamp), GST_TIME_ARGS(duration));
-
-    GST_BUFFER_TIMESTAMP(buffer) = timestamp;
-    GST_BUFFER_PTS(buffer) = timestamp;
-    GST_BUFFER_DTS(buffer) = timestamp;
-    GST_BUFFER_DURATION(buffer) = duration;
-    #endif
     return ret;
 }
 
@@ -1035,24 +728,6 @@ gst_sunxiv4l2_install_properties(GObjectClass *klass)
                                     g_param_spec_string("device", "Device", "captur device",
                                                         DEFAULT_DEVICE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-    g_object_class_install_property(klass, PROP_WIDTH,
-                                    g_param_spec_uint("width", "width", "capture video width",
-                                                      0, UINT_MAX, DEFAULT_WIDTH,
-                                                      G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-
-    g_object_class_install_property(klass, PROP_HEIGHT,
-                                    g_param_spec_uint("height", "height", "capture video height",
-                                                      0, UINT_MAX, DEFAULT_HEIGHT,
-                                                      G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-
-    g_object_class_install_property(klass, PROP_FPS,
-                                    gst_param_spec_fraction("framerate", "fps", "capture video framerate",
-                                                            25, 1, 60, 1, 30, 1,
-                                                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-
-    g_object_class_install_property(klass, PROP_FORMAT,
-                                    g_param_spec_string("format", "format", "capture output format",
-                                                        DEFAULT_FORMAT, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
     g_object_class_install_property(klass, PROP_IOMODE,
                                     g_param_spec_uint("io-mode", "io-mode", "capture device io mode",
                                                       1, 3, 1, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));

@@ -60,7 +60,6 @@ struct _GstSunxiV4l2Src {
     GstVideoAlignment video_align;
     GstBufferPool *pool;
     GstAllocator *allocator;
-    GList *gstbuffer_in_v4l2;
 };
 
 struct _GstSunxiV4l2SrcClass {

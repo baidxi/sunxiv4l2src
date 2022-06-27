@@ -23,8 +23,8 @@ gint gst_sunxiv4l2_close_device(gpointer handle);
 gint gst_sunxi_v4l2_set_buffer_count(gpointer v4l2handle, guint count, guint memory_mode);
 gint gst_sunxi_v4l2_allocate_buffer(gpointer v4l2handle, gint idx, struct v4l2_buffer *buf);
 gint gst_sunxi_v4l2_free_buffer(gpointer v4l2handle, gint idx);
-gpointer gst_sunxi_v4l2_memory_map(gpointer v4l2handle, struct v4l2_buffer *v4l2_buf, gint offset, GstMapFlags flags);
-gpointer gst_sunxi_v4l2_memory_map_full(gpointer v4l2handle, struct v4l2_buffer *v4l2_buf, gint offset, gsize *size, GstMapFlags flags);
+// gpointer gst_sunxi_v4l2_memory_map(gpointer v4l2handle, struct v4l2_buffer *v4l2_buf, gint offset, GstMapFlags flags);
+GstFlowReturn gst_sunxi_v4l2_memory_map_full(gpointer v4l2handle, struct v4l2_buffer *v4l2_buf, gpointer *data, GstMapFlags flags);
 void gst_sunxi_v4l2_memory_unmap(gpointer v4l2handle, gint idx, struct v4l2_buffer *buf);
 gboolean gst_sunxi_v4l2_streamon(gpointer v4l2handle);
 gint gst_sunxi_v4l2_streamoff(gpointer v4l2handle);
@@ -37,8 +37,11 @@ gint gst_sunxi_video_info_from_caps(GstVideoInfo *info, GstCaps *caps);
 gboolean gst_sunxiv4l2_is_open(gpointer v4l2handle);
 guint gst_sunxiv4l2_fps_d(gpointer v4l2handle);
 guint gst_sunxiv4l2_fps_n(gpointer v4l2handle);
-gint gst_sunxiv4l2_flush_all_buffer(gpointer v4l2handle);
-gint gst_sunxiv4l2_camera_qbuf(gpointer v4l2handle, GstBuffer *buffer);
-gint gst_sunxiv4l2_camera_dqbuf(gpointer v4l2handle, GstBuffer *buffer);
+GstFlowReturn gst_sunxiv4l2_flush_all_buffer(gpointer v4l2handle);
+gint gst_sunxiv4l2_camera_qbuf(gpointer v4l2handle, struct v4l2_buffer *v4l2_buf, gint idx);
+gint gst_sunxiv4l2_camera_dqbuf(gpointer v4l2handle, struct v4l2_buffer *v4l2_buf, gint idx);
+
+gpointer gst_sunxiv4l2_camera_pick_buffer(gpointer data, gint idx, gpointer v4l2handle);
+void gst_sunxiv4l2_camera_ref_buffer(gpointer data, gint idx, gpointer v4l2handle);
 
 #endif

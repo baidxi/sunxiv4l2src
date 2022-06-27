@@ -25,10 +25,17 @@ typedef struct {
 struct _GstAllocatorSunxiV4l2{
     GstAllocator parent;
     const gchar *name;
+    gboolean initialized;
     SUNXIV4l2AllocatorContext ctx;
     gint buffer_count;
     struct v4l2_buffer v4l2_buf[3];
+    GList  *mem_list;
+    GList *blk_list;
+    // gboolean in_used[3];
+    // gint mapped;
     gint allocated; 
+    // gpointer priv[3];
+    // GstMemory *mem[3];
 };
 
 struct _GstAllocatorSunxiV4l2Class {
@@ -40,5 +47,6 @@ struct _GstAllocatorSunxiV4l2Class {
 GType gst_allocator_sunxiv4l2_get_type(void);
 
 GstAllocator *gst_sunxi_v4l2_allocator_new(SUNXIV4l2AllocatorContext *ctx);
+GstFlowReturn gst_sunxi_v4l2_buffer_register(GstAllocator *allocator);
 
 #endif
