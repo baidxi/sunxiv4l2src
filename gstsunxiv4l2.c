@@ -22,21 +22,23 @@
 GST_DEBUG_CATEGORY_STATIC (sunxiv4l2_debug);
 #define GST_CAT_DEFAULT sunxiv4l2_debug
 
-typedef struct _SunxiV4l2mem_block SunxiV4l2mem_block;
+typedef struct _SunxiV4l2camer_mem_block SunxiV4l2camera_mem_block;
 
-struct _SunxiV4l2mem_block {
-    gboolean allocated;
+struct _SunxiV4l2camer_mem_block {
+    gboolean initialized;
+    gboolean used;
+    struct v4l2_buffer v4l2_buf;
     gpointer start[3];
     size_t len[3];
 };
-
 
 typedef struct _SunxiV4l2cameraHandle SunxiV4l2cameraHandle;
 typedef struct _SUNXIV4l2Handle SUNXIV4l2Handle;
 typedef gint (*camera_config)(SUNXIV4l2Handle *handle, guint v4l2fmt, guint w, guint h, guint fps_n, guint fps_d);
 typedef gint (*camera_ctrl)(SUNXIV4l2Handle *handle);
 typedef gint (*camera_fmt)(SUNXIV4l2Handle *handle, guint v4l2fmt, GstVideoInfo *info);
-typedef gint (*camera_buf_ops)(SUNXIV4l2Handle *handle, GstBuffer *buffer);
+typedef gint (*camera_buf_ops)(SUNXIV4l2Handle *handle, struct v4l2_buffer *v4l2_buf, gint idx);
+
 typedef struct _camera_ops {
     camera_config config;
     camera_ctrl streamon;
@@ -60,7 +62,6 @@ struct _SunxiV4l2cameraHandle{
     gint win_w;
     gint win_h;
     guint fmt;
-    SunxiV4l2mem_block mem[3];
     guint *support_format_table;
     guint memory_mode;
     camera_ops ops;
@@ -82,7 +83,6 @@ struct _SUNXIV4l2Handle{
     gboolean streamon;
     gboolean is_interlace;
     SunxiV4l2cameraHandle camera;
-    struct v4l2_buffer v4l2_buf[3];
 };
 
 typedef struct {
@@ -249,10 +249,7 @@ gst_sunxi_v4l2_camera_set_fmt(SUNXIV4l2Handle *handle, guint v4l2fmt, GstVideoIn
         GST_DEBUG("[%c%c%c%c]", v4l2fmt & 0xff, (v4l2fmt >> 8) & 0xff, 
                     (v4l2fmt >> 16) & 0xff, (v4l2fmt >> 24) & 0xff);
         GstVideoFormat gst_fmt = gst_video_format_from_fourcc(v4l2fmt);
-        // GST_ERROR("setting %s[%c%c%c%c] format failed errno:%d.", gst_video_format_to_string(gst_fmt), 
-        //             v4l2fmt & 0xff, (v4l2fmt >> 8) & 0xff, 
-        //             (v4l2fmt >> 16) & 0xff, (v4l2fmt >> 24) & 0xff,
-        //             errno);
+
         return -1;
     }
 
@@ -262,33 +259,6 @@ gst_sunxi_v4l2_camera_set_fmt(SUNXIV4l2Handle *handle, guint v4l2fmt, GstVideoIn
     }
 
     handle->camera.fmt = v4l2fmt;
-
-    // if (handle->type == V4L2_CAP_VIDEO_CAPTURE_MPLANE) {
-    //     if (handle->camera.win_w != fmt.fmt.pix_mp.width || handle->camera.win_h != fmt.fmt.pix_mp.height) {
-    //         GST_ERROR("does not support %u * %u", handle->in_w, handle->in_w);
-    //         return -1;
-    //     }
-
-    //     if (handle->camera.fmt != fmt.fmt.pix_mp.pixelformat) {
-    //         GstVideoFormat gst_fmt = gst_video_format_from_fourcc(v4l2fmt);
-
-    //         GST_ERROR("does not support %s format", gst_video_format_to_string(gst_fmt));
-    //         return -1;
-    //     }
-
-    //     handle->camera.nplanes = fmt.fmt.pix_mp.num_planes;
-    // } else {
-    //     if (handle->camera.win_h != fmt.fmt.pix.width || handle->camera.win_h != fmt.fmt.pix.height) {
-    //         GST_ERROR("does not support %u * %u", handle->in_w, handle->in_h);
-    //         return -1;
-    //     }
-
-    //     if (handle->camera.fmt != fmt.fmt.pix.pixelformat) {
-    //         GstVideoFormat gst_fmt = gst_video_format_from_fourcc(v4l2fmt);
-    //         GST_ERROR("does not support %s format", gst_video_format_to_string(gst_fmt));
-    //         return -1;
-    //     }
-    // }
 
     if (handle->type == V4L2_CAP_VIDEO_CAPTURE_MPLANE) {
         handle->camera.win_w = fmt.fmt.pix_mp.width;
@@ -307,34 +277,22 @@ gst_sunxi_v4l2_camera_set_fmt(SUNXIV4l2Handle *handle, guint v4l2fmt, GstVideoIn
 }
 
 static gint
-gst_sunxi_v4l2_camera_q_buffer(SUNXIV4l2Handle *handle, GstBuffer *buffer)
+gst_sunxi_v4l2_camera_q_buffer(SUNXIV4l2Handle *handle, struct v4l2_buffer *v4l2_buf, gint idx)
 {
-    GstMemory *mem;
-
-    mem = gst_buffer_get_memory(buffer, 0);
-    struct v4l2_buffer *v4l2_buf = &handle->v4l2_buf[mem->offset];
-
     return ioctl(handle->v4l2_fd, VIDIOC_QBUF, v4l2_buf);
 }
 
 static gint
-gst_sunxi_v4l2_camera_dq_buffer(SUNXIV4l2Handle *handle, GstBuffer *buffer)
+gst_sunxi_v4l2_camera_dq_buffer(SUNXIV4l2Handle *handle, struct v4l2_buffer *v4l2_buf, gint idx)
 {
-
-    GstMemory *mem;
-    struct v4l2_buffer *v4l2_buf;
     gint ret;
-
-    mem = gst_buffer_get_memory(buffer, 0);
-
-    v4l2_buf = &handle->v4l2_buf[mem->offset];
 
     ret = ioctl(handle->v4l2_fd, VIDIOC_DQBUF, v4l2_buf);
 
     if (ret == 0)
-        GST_DEBUG("**************DQBUF[%d] FINISH*****************************", mem->offset);
+        GST_DEBUG("**************DQBUF[%d] FINISH*****************************", idx);
     else {
-        GST_ERROR("**************DQBUF[%d] FAILED*****************************", mem->offset);
+        GST_ERROR("**************DQBUF[%d] FAILED*****************************", idx);
         return -1;
     }
     return 0;
@@ -777,17 +735,6 @@ gst_sunxi_v4l2_set_buffer_count(gpointer v4l2handle, guint count, guint memory_m
 gint
 gst_sunxi_v4l2_free_buffer(gpointer v4l2handle, gint idx)
 {
-    // gint i;
-    // SUNXIV4l2Handle *handle = v4l2handle;
-
-    // if (handle->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
-    //     for (i = 0; i < handle->nplanes; i++) {
-    //         // munmap(handle->camera.mem[idx].start[i], handle->camera.mem[idx].len);
-    //     }
-    // } else {
-    //     // munmap(handle->camera.mem[idx].start[0], handle->camera.mem[idx].len);
-    // }
-
     return 0;
 }
 
@@ -839,174 +786,59 @@ gst_sunxi_v4l2_allocate_buffer(gpointer v4l2handle, gint idx, struct v4l2_buffer
     
 }
 
-gpointer
-gst_sunxi_v4l2_memory_map(gpointer v4l2handle, struct v4l2_buffer *v4l2_buf, gint offset, GstMapFlags flags)
+GstFlowReturn
+gst_sunxi_v4l2_memory_map_full(gpointer v4l2handle, struct v4l2_buffer *v4l2_buf, gpointer *data, GstMapFlags flags)
 {
     gint i;
     SUNXIV4l2Handle *handle = v4l2handle;
-    gint ret;
+    SunxiV4l2camera_mem_block *blk;
+    GST_DEBUG("nplanes:%d, flags:0x%x, data:%p", handle->camera.nplanes, flags, data);
+    
+    g_return_val_if_fail(v4l2_buf != NULL, GST_FLOW_ERROR);
+    g_return_val_if_fail(data != NULL, GST_FLOW_ERROR);
+    
+    blk = g_slice_alloc0(sizeof(SunxiV4l2camera_mem_block));
 
-    GST_DEBUG("offset:%d, nplanes:%d, flags:0x%x", offset, handle->camera.nplanes, flags);
-
-    if (handle->camera.mem[offset].allocated == TRUE && 
-        handle->camera.mem[offset].start[0]) {
-            /* 
-            ret = ioctl(handle->v4l2_fd, VIDIOC_DQBUF, v4l2_buf);
-
-            if (ret < 0) {
-                GST_ERROR("VIDIOC_DQBUF FAILED:%d, errno:%d", offset, errno);
-                for (i = 0; i < handle->camera.nplanes; i++) {
-                munmap(handle->camera.mem[offset].start[i], v4l2_buf->m.planes[i].length);
-                }
-                return NULL;
-            }
-            */
-            return handle->camera.mem[offset].start[0];
-    } 
+    g_return_val_if_fail(blk != NULL, GST_FLOW_ERROR);
 
     if (handle->type == V4L2_CAP_VIDEO_CAPTURE_MPLANE) {
         for (i = 0; i < handle->camera.nplanes; i++) {
-            handle->camera.mem[offset].len[i] =  v4l2_buf->m.planes[i].length;
-            handle->camera.mem[offset].start[i] = mmap(NULL, 
-                                        v4l2_buf->m.planes->length, 
-                                        flags, MAP_SHARED, 
-                                        handle->v4l2_fd, 
-                                        v4l2_buf->m.planes[i].m.mem_offset
-            );
+            blk->len[i] = v4l2_buf->m.planes[i].length;
+            blk->start[i] = mmap(NULL,
+                                v4l2_buf->m.planes[i].length,
+                                flags, MAP_SHARED,
+                                handle->v4l2_fd, v4l2_buf->m.planes[i].m.mem_offset);
+
+            if (blk->start[i] == MAP_FAILED) {
+                GST_ERROR("map FAILED.");
+                g_slice_free1(sizeof(SunxiV4l2camera_mem_block), blk);
+                return GST_FLOW_ERROR;
+            }
         }
         free(v4l2_buf->m.planes);
         v4l2_buf->m.planes = NULL;
     } else {
-        handle->camera.mem[offset].len[0] = v4l2_buf->length;
-        handle->camera.mem[offset].start[0] = mmap(NULL, v4l2_buf->length, flags, MAP_SHARED, handle->v4l2_fd, v4l2_buf->m.offset);
-    }
-
-    handle->camera.mem[offset].allocated = TRUE;
-
-    if (handle->camera.mem[offset].start[0]) {
-        /*
-        if (handle->type == V4L2_CAP_VIDEO_CAPTURE_MPLANE) {
-            v4l2_buf->length = handle->camera.nplanes;
-            v4l2_buf->m.planes = (struct v4l2_plane *)calloc(v4l2_buf->length, sizeof(struct v4l2_plane));
-            if (v4l2_buf->m.planes == NULL) {
-                GST_ERROR("alloc plane memory failed.");
-                goto out;
-            }
+        blk->len[0] = v4l2_buf->length;
+        blk->start[0] = mmap(NULL, v4l2_buf->length, flags, MAP_SHARED, handle->v4l2_fd, v4l2_buf->m.offset);
+        if (blk->start[0] == MAP_FAILED) {
+            GST_ERROR("map FAILED.");
+            g_slice_free1(sizeof(SunxiV4l2camera_mem_block), blk);
+            return GST_FLOW_ERROR;
         }
-        ret = ioctl(handle->v4l2_fd, VIDIOC_QBUF, v4l2_buf);
-        if (ret < 0) {
-out:
-            GST_ERROR("QBUF FAILED:%d, errno:%d", offset, errno);
-            for (i = 0; i < handle->camera.nplanes; i++) {
-                munmap(handle->camera.mem[offset].start[i], v4l2_buf->m.planes[i].length);
-            }
-            return NULL;
-        }
-        */
-        return handle->camera.mem[offset].start[0];
-    } else {
-        GST_ERROR("map memory %d failed", offset);
-    }
-    return NULL;
-}
-
-gpointer
-gst_sunxi_v4l2_memory_map_full(gpointer v4l2handle, struct v4l2_buffer *v4l2_buf, gint offset, gsize *size, GstMapFlags flags)
-{
-    gint i, ret;
-    SUNXIV4l2Handle *handle = v4l2handle;
-
-    if (handle->camera.mem[offset].allocated == TRUE && 
-        handle->camera.mem[offset].start[0] != NULL) {
-            /*
-            ret = ioctl(handle->v4l2_fd, VIDIOC_DQBUF, v4l2_buf);
-            if (ret < 0) {
-                GST_ERROR("VIDIOC_DQBUF FAILED:%d, errno:%d", offset, errno);
-                for (i = 0; i < handle->camera.nplanes; i++) {
-                munmap(handle->camera.mem[offset].start[i], v4l2_buf->m.planes[i].length);
-                }
-                return NULL;
-            }
-            */
-            GST_DEBUG("idx:%d, %p",offset, handle->camera.mem[offset].start[0]);
-            return handle->camera.mem[offset].start[0];
     }
 
-    if (handle->type == V4L2_CAP_VIDEO_CAPTURE_MPLANE) {
-        for (i = 0; i < handle->camera.nplanes; i++) {
-            handle->camera.mem[offset].len[i] =  v4l2_buf->m.planes[i].length;
-            handle->camera.mem[offset].start[i] = mmap(NULL, 
-                                        v4l2_buf->m.planes->length, 
-                                        flags, MAP_SHARED, 
-                                        handle->v4l2_fd, 
-                                        v4l2_buf->m.planes[i].m.mem_offset
-            );
-        }
-        free(v4l2_buf->m.planes);
-        v4l2_buf->m.planes = NULL;
-    } else {
-        handle->camera.mem[offset].len[0] = v4l2_buf->length;
-        handle->camera.mem[offset].start[0] = mmap(NULL, v4l2_buf->length, flags, MAP_SHARED, handle->v4l2_fd, v4l2_buf->m.offset);
-    }
+    blk->initialized = TRUE;
 
-    handle->camera.mem[offset].allocated = TRUE;
+    *data = blk;
 
-    if (handle->camera.mem[offset].start[0] != NULL) {
-        /*
-        if (handle->type == V4L2_CAP_VIDEO_CAPTURE_MPLANE) {
-            v4l2_buf->length = handle->camera.nplanes;
-            v4l2_buf->m.planes = (struct v4l2_plane *)calloc(v4l2_buf->length, sizeof(struct v4l2_plane));
-            if (v4l2_buf->m.planes == NULL) {
-                GST_ERROR("alloc plane memory failed.");
-                goto out;
-            }
-        }        
-        ret = ioctl(handle->v4l2_fd, VIDIOC_QBUF, v4l2_buf);
-        if (ret < 0) {
-out:
-            GST_ERROR("QBUF FAILED:%d, errno:%d", offset, errno);
-            for (i = 0; i < handle->camera.nplanes; i++) {
-                munmap(handle->camera.mem[offset].start[i], v4l2_buf->m.planes[i].length);
-            }
-            return NULL;
-        }
-        */
-        GST_DEBUG("idx:%d, %p",offset, handle->camera.mem[offset].start[0]);
-        return handle->camera.mem[offset].start[0];
-    } else {
-        GST_ERROR("map memory full %d failed", offset);
-    }
-    return NULL;
+    return GST_FLOW_OK;
+
 }
 
 void
 gst_sunxi_v4l2_memory_unmap(gpointer v4l2handle, gint idx, struct v4l2_buffer *buf)
 {
-    gint i, ret;
-    SUNXIV4l2Handle *handle = v4l2handle;
-
-    GST_DEBUG("idx:%d, stat:%s",idx, handle->streamon ? "streamon" : "streamoff");
-
-    if (handle->streamon == TRUE) {
-        /*
-        ret = ioctl(handle->v4l2_fd, VIDIOC_QBUF, buf);
-
-        if (ret < 0) {
-            GST_ERROR("VIDIOC_QBUF FAILED:%d, errno:%d", idx, errno);
-        }
-        */
-        return;
-    }
-
-    if (handle->type == V4L2_CAP_VIDEO_CAPTURE_MPLANE) {
-        for (i = 0; i < handle->camera.nplanes; i++) {
-            munmap(handle->camera.mem[idx].start[i], handle->camera.mem[idx].len[i]);
-        }
-    } else {
-        munmap(handle->camera.mem[idx].start[0], handle->camera.mem[idx].len[0]);
-    }
-
-    handle->camera.mem[idx].allocated = FALSE;    
+    
 }
 
 guint
@@ -1035,43 +867,6 @@ gst_sunxi_v4l2capture_config(gpointer v4l2handle, guint v4l2fmt, guint w, guint 
 
     return handle->camera.ops.config(handle, v4l2fmt, w, h, fps_n, fps_d);
 }
-
-// gint
-// gst_sunxi_v4l2_qbuf(gpointer v4l2handle, gint idx)
-// {
-//     SUNXIV4l2Handle *handle = v4l2handle;
-//     #if 0
-//     gint i, ret;
-//     if (!handle->camera.streamon) {
-//         for (i = 0; i < handle->camera.nplanes; i++) {
-//             ret = handle->camera.ops.qbuf(handle);
-//             if (ret < 0) {
-//                 GST_ERROR("queue buffer failed.");
-//                 return -1;
-//             }
-//         }
-
-//         ret = gst_sunxi_v4l2_streamon(handle);
-
-//         if (ret < 0) {
-//             GST_ERROR("stream on failed.");
-//             return -1;
-//         }
-
-//         handle->camera.streamon = TRUE;
-
-//         return 0;
-//     }
-//     #endif
-//     return handle->camera.ops.qbuf(handle, idx);
-// }
-
-// gint
-// gst_sunxi_v4l2_dqbuf(gpointer v4l2handle, struct v4l2_buffer *buf)
-// {
-//     SUNXIV4l2Handle *handle = v4l2handle;
-//     return handle->camera.ops.dqbuf(handle, buf);
-// }
 
 static gint isOutputRawData(gint v4l2_fmt) {
     if (v4l2_fmt == V4L2_PIX_FMT_SBGGR8 ||
@@ -1777,12 +1572,12 @@ guint gst_sunxiv4l2_fps_d(gpointer v4l2handle)
 }
 
 
-gint gst_sunxiv4l2_flush_all_buffer(gpointer v4l2handle)
+GstFlowReturn gst_sunxiv4l2_flush_all_buffer(gpointer v4l2handle)
 {
     SUNXIV4l2Handle *handle = v4l2handle;
     gint i;
     struct v4l2_buffer buf;
-    gint ret;
+    GstFlowReturn ret = GST_FLOW_OK;
 
     for (i = 0; i < handle->camera.buffer_count; i++) {
         memset(&buf, 0, sizeof(struct v4l2_buffer));
@@ -1801,52 +1596,90 @@ gint gst_sunxiv4l2_flush_all_buffer(gpointer v4l2handle)
         if (handle->type == V4L2_CAP_VIDEO_CAPTURE_MPLANE)
             free(buf.m.planes);
         
-        if (ret < 0)
+        if (ret < 0) {
+            ret = GST_FLOW_ERROR;
             break;
-
-        memset(&handle->v4l2_buf[i], 0, sizeof(struct v4l2_buffer));
-
-        handle->v4l2_buf[i].memory = handle->camera.memory_mode;
-        handle->v4l2_buf[i].index = i;
-        handle->v4l2_buf[i].type = handle->camera.type;
-
-        if (handle->type == V4L2_CAP_VIDEO_CAPTURE_MPLANE) {
-            handle->v4l2_buf[i].length = handle->camera.nplanes;
-            handle->v4l2_buf[i].m.planes = (struct v4l2_plane *)calloc(handle->v4l2_buf[i].length, sizeof(struct v4l2_plane));
-            if (handle->v4l2_buf[i].m.planes == NULL) {
-                if (i == 0)
-                    return -1;
-                else
-                    goto error;
-            }
         }
     }
 
     return ret;
+}
 
-error:
-    GST_ERROR("alloc planes FAILED. errno:%d", errno);
-    if (handle->type == V4L2_CAP_VIDEO_CAPTURE_MPLANE) {
-        for (i = 0; i < handle->camera.nplanes; i++) {
-            if (handle->v4l2_buf[i].m.planes)
-                free(handle->v4l2_buf[i].m.planes);
+gint
+gst_sunxiv4l2_camera_qbuf(gpointer v4l2handle, struct v4l2_buffer *v4l2_buf, gint idx)
+{
+    SUNXIV4l2Handle *handle = v4l2handle;
+
+    return handle->camera.ops.qbuf(handle, v4l2_buf, idx);
+}
+
+gint
+gst_sunxiv4l2_camera_dqbuf(gpointer v4l2handle, struct v4l2_buffer *v4l2_buf, gint idx)
+{
+    SUNXIV4l2Handle *handle = v4l2handle;
+
+    return handle->camera.ops.dqbuf(handle, v4l2_buf, idx);
+}
+
+gpointer
+gst_sunxiv4l2_camera_pick_buffer(gpointer data, gint idx, gpointer v4l2handle)
+{
+    SunxiV4l2camera_mem_block *blk = data;
+    SUNXIV4l2Handle *handle = v4l2handle;
+    int ret;
+    struct timeval tv;
+    fd_set fds;
+
+    g_return_val_if_fail(blk->initialized == TRUE, NULL);
+    g_return_val_if_fail(handle != NULL, NULL);
+
+    if (handle->streamon == TRUE) {
+        if (blk->used == FALSE) {
+            blk->v4l2_buf.type = handle->camera.type;
+            blk->v4l2_buf.index = idx;
+            if (handle->type == V4L2_CAP_VIDEO_CAPTURE_MPLANE) {
+                blk->v4l2_buf.length = handle->camera.nplanes;
+                blk->v4l2_buf.m.planes = (struct v4l2_plane *)calloc(blk->v4l2_buf.length, sizeof(struct v4l2_plane));
+            }
+            blk->used = TRUE;
+        }
+
+        FD_ZERO(&fds);
+        FD_SET(handle->v4l2_fd, &fds);
+
+        ret = select(handle->v4l2_fd + 1, &fds, NULL, NULL, NULL);
+
+        if (ret < 0) {
+            GST_ERROR("WAIT CAMERA DATA FAILED.");
+            return NULL;
+        }
+
+        ret = gst_sunxiv4l2_camera_dqbuf(handle, &blk->v4l2_buf, 0);
+
+        if (ret < 0) {
+            return NULL;
         }
     }
-    return -1;
+
+    return blk->start[idx];
 }
 
-gint
-gst_sunxiv4l2_camera_qbuf(gpointer v4l2handle, GstBuffer *buffer)
+void gst_sunxiv4l2_camera_ref_buffer(gpointer data, gint idx, gpointer v4l2handle)
 {
+    SunxiV4l2camera_mem_block *blk = data;
     SUNXIV4l2Handle *handle = v4l2handle;
 
-    return handle->camera.ops.qbuf(handle, buffer);
-}
+    if (handle->streamon == TRUE) {
+        if (blk->used == FALSE) {
+            blk->v4l2_buf.type = handle->camera.type;
+            blk->v4l2_buf.index = idx;
+            if (handle->type == V4L2_CAP_VIDEO_CAPTURE_MPLANE) {
+                blk->v4l2_buf.length = handle->camera.nplanes;
+                blk->v4l2_buf.m.planes = (struct v4l2_plane *)calloc(blk->v4l2_buf.length, sizeof(struct v4l2_plane));
+            }
+            blk->used = TRUE;        
+        }
 
-gint
-gst_sunxiv4l2_camera_dqbuf(gpointer v4l2handle, GstBuffer *buffer)
-{
-    SUNXIV4l2Handle *handle = v4l2handle;
-
-    return handle->camera.ops.dqbuf(handle, buffer);
+        gst_sunxiv4l2_camera_qbuf(handle, &blk->v4l2_buf, idx);
+    }
 }

@@ -1,6 +1,9 @@
 #include <string.h>
 #include <stdlib.h>
 #include <linux/videodev2.h>
+
+#include <gst/gstmemory.h>
+
 #include "gstsunxiv4l2allocator.h"
 
 GST_DEBUG_CATEGORY_STATIC(sunxiv4l2_allocator_debug);
@@ -14,12 +17,8 @@ sunxi_v4l2_free_memory(GstAllocator *allocator, GstMemory *memory)
 {
     GstAllocatorSunxiV4l2 *v4l2_allocator = GST_ALLOCATOR_SUNXIV4L2(allocator);
     SUNXIV4l2AllocatorContext *ctx = &v4l2_allocator->ctx;
-    GST_DEBUG("%s", __func__);
 
-    if (v4l2_allocator->allocated < 0)
-        return;
-
-    gst_sunxi_v4l2_free_buffer(ctx->v4l2_handle, v4l2_allocator->allocated);
+    GST_DEBUG("-------------------");
 }
 
 static GstMemory *
@@ -47,7 +46,13 @@ sunxi_v4l2_alloc_memory(GstAllocator *allocator, gsize size,
 
     GST_DEBUG("allocate buffer index(%d), total count(%d)", v4l2_allocator->allocated, v4l2_allocator->buffer_count);
 
-    if (v4l2_allocator->allocated < v4l2_allocator->buffer_count) {
+    if (v4l2_allocator->initialized == TRUE) {
+        if (g_list_length(v4l2_allocator->mem_list) > 0) {
+            GList *list = g_list_first(v4l2_allocator->mem_list);
+            mem = list->data;
+        }
+    } else if (v4l2_allocator->allocated < v4l2_allocator->buffer_count) {
+
         nplanes = gst_sunxi_v4l2_allocate_buffer(ctx->v4l2_handle, v4l2_allocator->allocated, &v4l2_buf);
 
         if (nplanes < 0) {
@@ -55,92 +60,44 @@ sunxi_v4l2_alloc_memory(GstAllocator *allocator, gsize size,
             return NULL;
         }
 
+        mem = gst_allocator_alloc(NULL, 0, NULL);
+
+        if (!mem) {
+            GST_ERROR("allocate new memory failed,errno:%d.", errno);
+            if (nplanes)
+                free(v4l2_buf.m.planes);
+
+            return NULL;
+        }
+
+        mem->maxsize = nplanes ? v4l2_buf.m.planes[0].length : v4l2_buf.length;
+        mem->size = nplanes ? v4l2_buf.m.planes[0].length : v4l2_buf.length;
+        mem->allocator =gst_object_ref(allocator);
+        
         v4l2_allocator->v4l2_buf[v4l2_allocator->allocated] = v4l2_buf;
+        // v4l2_allocator->mem[v4l2_allocator->allocated] = mem;
         v4l2_allocator->allocated++;
+        v4l2_allocator->mem_list = g_list_append(v4l2_allocator->mem_list, mem);
     } else {
         GST_ERROR("No more v4l2 buffer for allocating.");
         return NULL;
     }
 
-    mem = gst_allocator_alloc(NULL, 0, NULL);
-
-    if (!mem) {
-        GST_ERROR("allocate new memory failed,errno:%d.", errno);
-        if (nplanes)
-            free(v4l2_buf.m.planes);
-
-        return NULL;
-    }
-
-    mem->maxsize = nplanes ? v4l2_buf.m.planes[0].length : v4l2_buf.length;
-    mem->offset = v4l2_allocator->allocated - 1;
-    mem->size = nplanes ? v4l2_buf.m.planes[0].length : v4l2_buf.length;
-    mem->allocator = allocator;
-
     return mem;
 }
-
-static gpointer
-sunxi_v4l2_mem_map(GstMemory *mem, gsize maxsize, GstMapFlags flags)
-{
-    GstAllocatorSunxiV4l2 *v4l2_allocator = GST_ALLOCATOR_SUNXIV4L2(mem->allocator);
-    gpointer ret;
-    struct v4l2_buffer *buf = &v4l2_allocator->v4l2_buf[mem->offset];
-
-    SUNXIV4l2AllocatorContext *ctx = &v4l2_allocator->ctx;
-
-    GST_DEBUG("%s", __func__);
-
-    ret =  gst_sunxi_v4l2_memory_map(ctx->v4l2_handle, buf, mem->offset, flags);
-
-    if (!ret)
-        return NULL;
-
-    mem = gst_memory_ref(mem);
-
-    return ret;
-}
-
-static void
-sunxi_v4l2_unmap(GstMemory *mem)
-{
-    GstAllocatorSunxiV4l2 *v4l2_allocator = GST_ALLOCATOR_SUNXIV4L2(mem->allocator);
-    SUNXIV4l2AllocatorContext *ctx = &v4l2_allocator->ctx;
-    struct v4l2_buffer *buf = &v4l2_allocator->v4l2_buf[mem->offset];
-    GST_DEBUG("%s", __func__);
-
-    gst_sunxi_v4l2_memory_unmap(ctx->v4l2_handle, mem->offset, buf);
-    
-    gst_memory_unref(mem);
-
-}
-
-// static GstMemory *
-// sunxi_v4l2_memcpy(GstMemory *mem, gssize offset, gssize size)
-// {
-
-// }
 
 static gpointer
 sunxi_v4l2_mem_map_full(GstMemory *mem, GstMapInfo * info, gsize maxsize)
 {
     gpointer data;
     GstAllocatorSunxiV4l2 *v4l2_allocator = GST_ALLOCATOR_SUNXIV4L2(mem->allocator);
-    struct v4l2_buffer *buf = &v4l2_allocator->v4l2_buf[mem->offset];
     SUNXIV4l2AllocatorContext *ctx = &v4l2_allocator->ctx;
-    gsize size;
 
-    data = gst_sunxi_v4l2_memory_map_full(ctx->v4l2_handle, buf, mem->offset, &size, GST_MAP_READWRITE);
+    if (g_list_length(v4l2_allocator->blk_list) > 0) {
+        GList *list = g_list_first(v4l2_allocator->blk_list);
 
-    if (!data)
-        return NULL;
-
-    info->data = data;
-    info->size = size;
-    info->memory = mem;
-    info->maxsize = size;
-
-    mem = gst_memory_ref(mem);
+        data = gst_sunxiv4l2_camera_pick_buffer(list->data, 0, ctx->v4l2_handle);
+    }
 
     return data;
 }
@@ -148,15 +105,13 @@ sunxi_v4l2_mem_map_full(GstMemory *mem, GstMapInfo * info, gsize maxsize)
 static void
 sunxi_v4l2_mem_unmap_full(GstMemory *mem, GstMapInfo * info)
 {
+    GList *list;
     GstAllocatorSunxiV4l2 *v4l2_allocator = GST_ALLOCATOR_SUNXIV4L2(mem->allocator);
     SUNXIV4l2AllocatorContext *ctx = &v4l2_allocator->ctx;
-    struct v4l2_buffer *buf = &v4l2_allocator->v4l2_buf[mem->offset];
 
-    gst_sunxi_v4l2_memory_unmap(ctx->v4l2_handle, mem->offset, buf);
+    list = g_list_first(v4l2_allocator->blk_list);
 
-    gst_memory_unref(mem);
-
-    memset(info, 0, sizeof(GstMapInfo));
+    gst_sunxiv4l2_camera_ref_buffer(list->data, 0, ctx->v4l2_handle);
 }
 
 static void
@@ -169,12 +124,11 @@ gst_allocator_sunxiv4l2_init(GstAllocatorSunxiV4l2 *allocator)
 
     memset(&allocator->ctx, 0, sizeof(SUNXIV4l2AllocatorContext));
 
-    alloc->mem_map = sunxi_v4l2_mem_map;
-    alloc->mem_unmap = sunxi_v4l2_unmap;
-    // alloc->mem_copy = sunxi_v4l2_memcpy;
+    allocator->initialized = FALSE;
+
     alloc->mem_map_full = sunxi_v4l2_mem_map_full;
     alloc->mem_unmap_full = sunxi_v4l2_mem_unmap_full;
-    // alloc->mem_share = sunxi_v4l2_share_memory;
+
 }
 
 static void
@@ -206,8 +160,33 @@ gst_sunxi_v4l2_allocator_new(SUNXIV4l2AllocatorContext *ctx)
 
     memcpy(&allocator->ctx, ctx, sizeof(*ctx));
 
-    // gst_allocator_register("sunxi_v4l2_alloctor", gst_object_ref(allocator));
-
     return (GstAllocator *)allocator;
 }
 
+GstFlowReturn
+gst_sunxi_v4l2_buffer_register(GstAllocator *allocator)
+{
+    gint i;
+    GstFlowReturn ret = GST_FLOW_ERROR;
+    gpointer data;
+    struct v4l2_buffer *v4l2_buf;
+    SUNXIV4l2AllocatorContext *ctx;
+    GstAllocatorSunxiV4l2 *sunxi_allocator = GST_ALLOCATOR_SUNXIV4L2(allocator);
+
+    ctx = &sunxi_allocator->ctx;
+
+    g_return_val_if_fail(sunxi_allocator->allocated != 0, ret);
+
+    for (i = 0; i < sunxi_allocator->allocated; i++) {
+        v4l2_buf = &sunxi_allocator->v4l2_buf[i];
+        ret = gst_sunxi_v4l2_memory_map_full(ctx->v4l2_handle, v4l2_buf, &data, GST_MAP_READWRITE);
+
+        g_return_val_if_fail(ret == GST_FLOW_OK, ret);
+
+        sunxi_allocator->blk_list =  g_list_append(sunxi_allocator->blk_list, data);
+    }
+
+    sunxi_allocator->initialized = TRUE;
+
+    return ret;
+}
