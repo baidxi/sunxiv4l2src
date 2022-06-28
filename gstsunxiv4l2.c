@@ -835,12 +835,6 @@ gst_sunxi_v4l2_memory_map_full(gpointer v4l2handle, struct v4l2_buffer *v4l2_buf
 
 }
 
-void
-gst_sunxi_v4l2_memory_unmap(gpointer v4l2handle, gint idx, struct v4l2_buffer *buf)
-{
-    
-}
-
 guint
 gst_sunxiv_v4l2_fmt_gst2v4l2(GstVideoFormat gstfmt)
 {

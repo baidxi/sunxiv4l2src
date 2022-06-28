@@ -17,8 +17,6 @@ sunxi_v4l2_free_memory(GstAllocator *allocator, GstMemory *memory)
 {
     GstAllocatorSunxiV4l2 *v4l2_allocator = GST_ALLOCATOR_SUNXIV4L2(allocator);
     SUNXIV4l2AllocatorContext *ctx = &v4l2_allocator->ctx;
-
-    GST_DEBUG("-------------------");
 }
 
 static GstMemory *
@@ -75,7 +73,6 @@ sunxi_v4l2_alloc_memory(GstAllocator *allocator, gsize size,
         mem->allocator =gst_object_ref(allocator);
         
         v4l2_allocator->v4l2_buf[v4l2_allocator->allocated] = v4l2_buf;
-        // v4l2_allocator->mem[v4l2_allocator->allocated] = mem;
         v4l2_allocator->allocated++;
         v4l2_allocator->mem_list = g_list_append(v4l2_allocator->mem_list, mem);
     } else {
@@ -146,8 +143,6 @@ gst_sunxi_v4l2_allocator_new(SUNXIV4l2AllocatorContext *ctx)
 {
     GstAllocatorSunxiV4l2 *allocator;
     GST_DEBUG_CATEGORY_INIT(sunxiv4l2_allocator_debug, "sunxiv4l2_allocator", 0, "SUNXI V4L2 allocator");
-
-    GST_DEBUG("%s", __func__);
 
     allocator = g_object_new(gst_allocator_sunxiv4l2_get_type(), NULL);
 

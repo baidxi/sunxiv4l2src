@@ -436,8 +436,6 @@ gst_sunxi_v4l2src_create(GstPushSrc *psrc, GstBuffer **buf)
     GstBuffer *buffer = NULL;
     GstSunxiV4l2Src *v4l2src = GST_SUNXI_V4L2SRC(psrc);
 
-    GST_DEBUG("---------------------------------------------");
-
     ret = gst_sunxi_v4l2src_acquire_buffer(v4l2src, buf);
 
     if (G_UNLIKELY(ret != GST_FLOW_OK)) {
